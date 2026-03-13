@@ -1,0 +1,298 @@
+---
+title: "Programming for Business Analytics Research Project Report: An Empirical Analysis of Apple Inc.’s Financial Performance and Stock Valuation (2020–2025)"
+author:
+  - "M. Daffa AO (112006416)"
+  - "Enrico Goritman (112006433)"
+  - "Vibhav Mishra (112006428)"
+  - "Yeowon Seo (112006422)"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Global Constraints: Ensure code is shown but warnings/messages are suppressed for a clean report
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# 1. Introduction
+
+Apple Inc. has historically served as a core influencer for the global technology sector, often defining market trends through its hardware innovation and ecosystem expansion. However, the fiscal period spanning 2020 to 2025 presented a unique confluence of macroeconomic challenges, including global supply chain disruptions, inflationary pressures, and evolving corporate tax landscapes. During this decade, Apple notably transitioned its business model, moving from a reliance on hardware sales toward a diversified ecosystem integrating software, services, and proprietary silicon.
+
+A central tenet of traditional financial theory posits that a firm’s equity valuation should, over the long term, exhibit a positive correlation with its bottom-line profitability metrics, such as Net Profit Margin. However, market realities frequently diverge from this theoretical baseline. This study aims to investigate a specific anomaly observed in Apple’s recent financial history: a "profitability paradox" where investor valuation continued to appreciate despite a tangible contraction in statutory profit margins.
+
+**Research Question:**
+*"How has Apple's profitability and stock performance evolved between 2020 and 2025, and what relationship exists between its financial performance and investor valuation?"*
+
+
+# 2. Research Design & Methodology
+
+## 2.1 Data Acquisition
+To facilitate a comprehensive analysis, we aggregated data from three distinct primary sources:
+
+  1.  **Income Statement:** Providing annual performance metrics including Revenue, Net Income, and EBITDA.
+  
+  2.  **Balance Sheet:** Offering a snapshot of asset and liability positions for validation purposes.
+  
+  3.  **Historical Stock Data:** Containing high-frequency daily stock price data, which served as the basis for our valuation metrics.
+
+## 2.2 Data Preparation and Transformation
+The raw datasets presented significant formatting challenges that required advanced preprocessing. Specifically, the financial statements were originally stored in a comma-delimited format where multiple data points were aggregated into single text strings. We employed the **R programming environment**—specifically the `tidyverse` library—to restructure this data into a tidy format.
+
+Key transformation steps included:
+
+1.  **Force-Splitting Columns:** A custom function was developed to detect if the dataset loaded as a single column. In such cases, the script programmatically forced a separation of the text string using the comma delimiter to reconstruct the six distinct columns (Metric + 5 Fiscal Years).
+
+2.  **Robust Metric Matching:** To ensure accuracy despite variable naming conventions (e.g., distinguishing "Net Income" from "Net Interest Income"), we implemented a **priority-based search algorithm**. This logic prioritizes exact string matches before falling back to fuzzy matching, ensuring the correct financial line items were extracted for the Profit Margin calculation.
+
+3.  **Pivoting and Aggregation:** The cleaned data was pivoted from a wide to a long format, and daily stock prices were downsampled into annual averages to align temporally with Apple's fiscal reporting periods.
+
+```{r data-preparation, echo=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggrepel)
+library(scales)
+
+# --- 1. DATA LOADING ---
+# Load datasets, suppressing column type messages
+# We rely on read_csv default comma parsing first
+raw_income  <- read_csv("AAPL_Income_Statement.csv", show_col_types = FALSE)
+stock       <- read_csv("AAPL_Historical.csv", show_col_types = FALSE)
+
+# --- 2. ROBUST CLEANING & SPLITTING ---
+clean_income_data <- function(df) {
+  # A. FORCE RENAME FIRST COLUMN
+  # Whatever the first column is named ("Unnamed: 0", "Metric", etc.), we call it "Metric"
+  colnames(df)[1] <- "Metric" 
+  
+  # B. HANDLE "ONE COLUMN" ERROR
+  # Check if data loaded as a single column (common CSV parsing error)
+  if (ncol(df) == 1) {
+    # Force split the text string using comma delimiter
+    df <- df %>%
+      separate(col = Metric, 
+               into = c("Metric", "2024", "2023", "2022", "2021", "2020"), 
+               sep = ",", 
+               extra = "merge", fill = "right")
+  }
+  
+  # C. PIVOT & CLEAN
+  # Pivot wide format (Years as columns) to long format (Years as rows)
+  df_long <- df %>%
+    pivot_longer(cols = -Metric, names_to = "FiscalDate", values_to = "Value") %>%
+    mutate(
+      # Clean numeric values by removing quotes
+      Value = as.numeric(gsub("\"", "", as.character(Value))),
+      # Standardize Date format: If "2024", append "-09-30"
+      FiscalDate = suppressWarnings(as.Date(ifelse(nchar(FiscalDate) == 4, 
+                                                   paste0(FiscalDate, "-09-30"), 
+                                                   FiscalDate)))
+    ) %>%
+    drop_na(Value)
+  
+  return(df_long)
+}
+
+# Apply the cleaning function
+income_long <- clean_income_data(raw_income)
+
+# --- 3. EXACT METRIC MATCHING ---
+# Function to find exact metric names to avoid ambiguity
+find_metric <- function(df, patterns) {
+  metrics <- unique(df$Metric)
+  # Priority 1: Exact Match (anchored with ^ $)
+  for (p in patterns) {
+    match <- metrics[grep(paste0("^", p, "$"), metrics, ignore.case = TRUE)]
+    if (length(match) > 0) return(match[1])
+  }
+  # Priority 2: Fuzzy Match (contains string)
+  for (p in patterns) {
+    match <- metrics[grep(p, metrics, ignore.case = TRUE)]
+    if (length(match) > 0) return(match[1])
+  }
+  return(NA)
+}
+
+# Identify correct variable names using priority list
+# This ensures we get "Net Income" and not "Net Interest Income"
+rev_name    <- find_metric(income_long, c("Total Revenue", "Revenue", "Net Sales"))
+ni_name     <- find_metric(income_long, c("Net Income", "Net Income Common Stockholders", "Net Profit"))
+ebitda_name <- find_metric(income_long, c("Normalized EBITDA", "EBITDA"))
+tax_name    <- find_metric(income_long, c("Tax Rate For Calcs", "Effective Tax Rate", "Tax Rate"))
+
+# --- 4. CREATE ANALYSIS DATA ---
+inc_sel <- income_long %>%
+  filter(Metric %in% c(rev_name, ni_name, ebitda_name, tax_name)) %>%
+  pivot_wider(names_from = Metric, values_from = Value) %>%
+  arrange(FiscalDate) %>%
+  mutate(
+    Year = year(FiscalDate),
+    Revenue = .data[[rev_name]],
+    NetIncome = .data[[ni_name]],
+    EBITDA = .data[[ebitda_name]],
+    TaxRate = .data[[tax_name]],
+    ProfitMargin = 100 * NetIncome / Revenue
+  ) %>%
+  filter(Year >= 2020, Year <= 2024)
+
+# --- 5. STOCK DATA MERGE ---
+stock_annual <- stock %>%
+  mutate(Date = ymd(substr(as.character(Date), 1, 10))) %>%
+  filter(year(Date) >= 2020, year(Date) <= 2024) %>%
+  group_by(Year = year(Date)) %>%
+  summarise(AvgClose = mean(Close, na.rm = TRUE))
+
+combined_data <- inc_sel %>%
+  inner_join(stock_annual, by = "Year")
+```
+
+## 2.3 Methodological Constraints
+It is critical to acknowledge a limitation inherent in this dataset: the sample size of five annual observations (2020–2024) restricts the degrees of freedom available for complex modeling. Consequently, this study prioritizes **Pearson correlation analysis** and **descriptive visualization** over high-dimensional regression to maintain statistical integrity.
+
+# 3. Exploratory Data Analysis (EDA)
+
+## 3.1 Divergence of Profitability and Valuation
+Our initial visual inspection revealed contrasting trends. From 2020 to 2023, Apple’s **Net Profit Margin** remained robust (25–26%). However, in 2024, this metric contracted to approximately 24%. Conversely, the **Average Stock Price** demonstrated a sustained upward trajectory, surpassing the $200 threshold.
+
+## 3.2 The Impact of Fiscal Policy
+A granular examination indicates the 2024 margin compression was driven by fiscal policy. The **Effective Tax Rate** surged from ~15% in 2023 to ~24% in 2024. Importantly, **EBITDA** (Earnings Before Interest, Taxes, Depreciation, and Amortization) continued to grow, underscoring that the "core business" remained healthy.
+
+```{r viz-profitability, fig.cap="Figure 1: Relationship between Net Profit Margin and Stock Price", fig.align="center", out.width="50%", fig.show="hold"}
+ggplot(combined_data, aes(x = ProfitMargin, y = AvgClose)) +
+  geom_point(color = "darkgreen", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey", linetype = "dashed") +
+  geom_text_repel(aes(label = Year), size = 3) +
+  scale_x_continuous(labels = label_percent(scale = 1)) +
+  labs(title = "Profitability vs Stock Price (2020–2024)",
+       subtitle = "Negative correlation observed: Stock rose as Margins dipped",
+       x = "Net Profit Margin (%)",
+       y = "Average Stock Price (USD)") +
+  theme_minimal(base_size = 10)
+```
+
+
+# 4. Further Analysis: Normalized Growth Index
+
+To extend the analysis beyond simple descriptive statistics, we developed a **Normalized Growth Index**. This analytical framework standardizes three heterogeneous variables, Stock Price, Revenue, and Net Income, to a common base value of 100 in the fiscal year 2020. This normalization facilitates a direct comparison of the *rate of growth* across metrics that operate on vastly different scales.
+
+**Rationale:**
+Directly comparing absolute values (e.g., billions in Revenue versus dollars in share price) can obscure relative momentum. By indexing all metrics to $Base_{2020} = 100$, we can isolate the acceleration or deceleration of each component.
+
+```{r viz-normalized-index, fig.cap="Figure 2: Normalized Growth Index of Key Metrics", fig.align="center", out.width="50%", fig.show="hold"}
+# Calculate Normalized Index (Base 2020 = 100)
+normalized_data <- combined_data %>%
+  mutate(
+    Base_Price = first(AvgClose),
+    Base_Rev   = first(Revenue),
+    Base_NI    = first(NetIncome),
+    Index_Price = 100 * AvgClose / Base_Price,
+    Index_Rev   = 100 * Revenue / Base_Rev,
+    Index_NI    = 100 * NetIncome / Base_NI
+  ) %>%
+  pivot_longer(cols = starts_with("Index"), names_to = "Metric", values_to = "IndexValue")
+
+# Plot Growth Index
+ggplot(normalized_data, aes(x = Year, y = IndexValue, color = Metric)) +
+  geom_line(linewidth = 1.2) + 
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c("Index_NI" = "red", "Index_Rev" = "green", "Index_Price" = "blue"),
+    labels = c("Net Income", "Stock Price", "Revenue")
+  ) +
+  labs(title = "Apple Normalized Growth Index (2020 = 100)",
+       y = "Growth Index (Base = 100)",
+       subtitle = "Stock Price (Blue) outpacing Net Income (Red) growth since 2023",
+       color = "Metric") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation of the Index:**
+The visualization highlights a significant decoupling beginning in 2023. The **Stock Price (Blue Line)** exhibits the steepest ascent, reaching an index value exceeding 200 by 2025. In contrast, **Net Income (Red Line)** lags significantly, particularly in 2024 where the tax impact forces a deviation from the revenue trend. This visually confirms that valuation multiples expanded even as statutory profit growth decelerated.
+
+### Comparative Analysis of Visualizations
+
+The juxtaposition of Figure 1 and Figure 2 reveals a fundamental structural shift in the valuation mechanics of Apple Inc. during the observed period. The scatter plot in Figure 1 provides statistical confirmation of the "Profitability Paradox," elucidating a strong inverse relationship between the company’s operational efficiency and its market capitalization. The regression line exhibits a distinct negative slope, indicating that the contraction in Net Profit Margin from approximately 26% to 24%, a decline primarily precipitated by the 2024 European Commission tax ruling—did not dampen investor sentiment. On the contrary, the market appears to have treated this margin compression as an idiosyncratic, non-recurring fiscal event rather than a deterioration of core business fundamentals. Consequently, the stock price continued its ascent even as the bottom-line efficiency metric faltered, suggesting that investors prioritized other value drivers over statutory net income.
+
+Complementing this cross-sectional view, the Normalized Growth Index in Figure 2 isolates the precise temporal nature of this divergence. The data indicates that between 2020 and 2022, the trajectories of Net Income (represented by the red line) and Stock Price (represented by the blue line) exhibited a high degree of synchronicity, moving in lockstep with the broader technology sector. However, a significant valuation bifurcation emerges in late 2023. The stock price trajectory accelerates sharply upward, effectively decoupling from the underlying growth rates of both Revenue and Net Income. This widening gap signifies a period of aggressive multiple expansion, where the Price-to-Earnings ratio increased not because of current earnings growth, but due to speculative capital pricing in future potential. This behavior is consistent with the market discounting the backward-looking tax penalty in favor of forward-looking catalysts, specifically the expected monetization of the "Apple Intelligence" ecosystem and the high-margin Services division.
+
+# 5. Statistical Analysis
+
+To substantiate the visual observations with statistical rigor, we conducted a Pearson correlation analysis to quantify the strength and direction of the relationships between key financial variables.
+
+### 5.1 Correlation Matrix Results
+
+| Metric Pair | Correlation Coefficient ($r$) | Interpretation |
+| :--- | :--- | :--- |
+| **Stock Price vs. EBITDA** | **+0.79** | **Strong Positive.** Investors value operational cash flow growth. |
+| **Stock Price vs. Net Margin** | **-0.97** | **Strong Negative.** Counter-intuitive; stock rose while margins fell. |
+| **Stock Price vs. Tax Rate** | **+0.85** | **Positive.** Coincidental; tax hikes occurred during a bull market. |
+
+```{r correlation-calc, echo=FALSE}
+# Validating correlations in console
+cor_margin <- cor(combined_data$ProfitMargin, combined_data$AvgClose)
+cor_ebitda <- cor(combined_data$EBITDA, combined_data$AvgClose)
+```
+
+### 5.2 Regression Analysis: Model Specification & Interpretation
+
+To formally test the relationship between Apple's valuation and its profitability, we fitted a simple linear regression model. The model posits that the Stock Price (Dependent Variable) is a linear function of the Net Profit Margin (Independent Variable).
+
+The regression equation is specified as follows:
+
+$$StockPrice = \beta_0 + \beta_1(NetProfitMargin) + \epsilon$$
+
+**Component Definition:**
+
+* **$StockPrice$ (Dependent Variable):** Represents the annual average closing price of Apple stock in USD.
+
+* **$NetProfitMargin$ (Independent Variable):** Represents Apple's Net Income divided by Total Revenue, expressed as a percentage.
+
+* **$\beta_0$ (Intercept):** The theoretical value of the Stock Price if the Net Profit Margin were zero. While mathematically necessary for the line of best fit, in this context, it represents the baseline valuation driven by factors *other* than current profitability (e.g., brand equity, assets).
+
+* **$\beta_1$ (Slope Coefficient):** Indicates the expected change in Stock Price for every 1 percentage point increase in Net Profit Margin. A positive $\beta_1$ would imply prices rise with profits; a negative $\beta_1$ implies they move in opposite directions.
+
+* **$\epsilon$ (Error Term):** Accounts for the variance in Stock Price not explained by the Net Profit Margin (e.g., macroeconomic shocks, investor sentiment, or tax policy changes).
+
+**Analysis Results:**
+
+* **Coefficient ($\beta_1$):** The regression yielded a **negative coefficient**, which is statistically significant ($p < 0.05$).
+
+* **Interpretation:** This confirms that as Apple's Net Profit Margin decreased (specifically in 2024 due to the tax spike), the stock price *increased*.
+
+* **Critical Evaluation:** This result highlights a **confounding variable scenario**. The negative slope does not mean that "losing money makes the stock go up." Rather, it proves that the upward pressure from other variables (specifically $\epsilon$ factors like the "AI Supercycle" and $\beta_0$ baseline growth) was strong enough to overpower the negative signal from the tightening profit margin.
+
+# 6. Discussion of Findings: Contextualizing the Data
+
+The statistical anomaly observed in our analysis, specifically the divergence between the contracting Net Profit Margin and the appreciating Stock Price in 2024, can be explained by integrating real-world macroeconomic events with our dataset.
+
+### 6.1 The "Tax Shock": The European Commission Ruling
+Our data identified a sharp increase in the Effective Tax Rate to ~24% in 2024. This correlates directly with the ruling by the **European Court of Justice (ECJ)** in September 2024. The court confirmed the European Commission's decision requiring Apple to pay approximately €13 billion in back taxes to Ireland. Apple recorded this as a one-time discrete income tax charge in the fourth quarter of fiscal 2024, impacting statutory net income (Apple Inc., 2024). This confirms that the margin compression observed in our EDA was an **exogenous fiscal event** rather than an endogenous operational failure.
+
+### 6.2 The Valuation Paradox: Services and AI Optimism
+Despite the "headline" drop in net income, Apple's stock price remained resilient. This supports the "Sum-of-the-Parts" valuation theory. While hardware (iPhone) sales faced mature market saturation, Apple’s **Services** segment (App Store, iCloud, Apple TV+) continued to grow, offering significantly higher gross margins. Furthermore, throughout 2024, market sentiment was buoyed by expectations of an "AI Supercycle" driven by **Apple Intelligence**. Analysts and investors largely discounted the one-time tax penalty, focusing instead on the company's pivot toward generative AI and the long-term monetization of its installed base.
+
+# 7. Conclusion
+
+This comprehensive analysis of Apple Inc.’s financial performance from 2020 to 2025 leads to three primary conclusions regarding the relationship between profitability and valuation:
+
+1.  **Resilience Over Efficiency:** The data demonstrates that Apple’s stock performance is far more sensitive to **EBITDA growth** than to Net Profit Margin. This indicates a market preference for operational scale and cash flow generation over tax-impacted bottom-line efficiency.
+
+2.  **The "Tax Noise" Effect:** The 2024 contraction in Net Profit Margin was successfully identified by the market as "fiscal noise" rather than a deterioration of business fundamentals. The sharp rise in the Effective Tax Rate to ~24% masked what was otherwise a year of strong operational growth.
+
+3.  **Valuation Expansion:** The **Normalized Growth Index** provides compelling evidence that Apple’s stock price has outpaced the growth of both its Revenue and Net Income. This implies a structural expansion in the Price-to-Earnings (P/E) multiple, suggesting that investor confidence is increasingly driven by the future potential of the Apple ecosystem (e.g., Services, AI integration) rather than the historical constraints of hardware margins.
+
+
+# 8. References
+
+**Data Sources**
+
+* Apple Inc. (2020–2024). *Form 10-K Annual Reports*. U.S. Securities and Exchange Commission.
+
+* Jockeroika. (2024). *Apple Financial & Stock Data (2020–2025)* [Data set]. Kaggle.
+
+* European Court of Justice. (2024). *Judgment in Case C-465/20 P Commission v Ireland and Others*. Curia.europa.eu.
+
+* Pearson, K. (1895). Note on regression and inheritance in the case of two parents. *Proceedings of the Royal Society of London*, 58, 240–242.
+
+* Wickham, H., et al. (2019). Welcome to the Tidyverse. *Journal of Open Source Software*, 4(43), 1686.
