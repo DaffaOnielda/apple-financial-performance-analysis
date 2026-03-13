@@ -19,7 +19,7 @@ $$StockPrice = \beta_0 + \beta_1(NetProfitMargin) + \epsilon$$
 2. **Cash is King:** The stock performance actually had a strong positive correlation with EBITDA growth ($r = +0.79$). Investors cared way more about operational cash flow scale than the final, tax-impacted net income.
 3. **Valuation Multiple Expansion:** My Normalized Growth Index showed the stock price completely decoupling from net income growth around late 2023. The market stopped pricing Apple strictly on its current hardware margins and started pricing in the future potential of the Apple Intelligence ecosystem.
 
-## 📂 What's in this Repo?
+## What's in this Repo?
 * `Group 4 FINAL REPORT.Rmd`: The brain of the project. All the R code, custom cleaning functions, and statistical modeling.
 * `Group-4-FINAL-REPORT.pdf`: The final, clean research report if you just want to read the business insights and see the charts.
 * `AAPL_Income_Statement.csv` & `AAPL_Balance_Sheet.csv`: The raw corporate datasets used.
