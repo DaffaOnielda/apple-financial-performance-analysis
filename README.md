@@ -2,7 +2,7 @@
 
 **Ever wondered why a company's stock can hit all-time highs even when their profit margins take a massive hit?**
 
-Welcome to our data-driven deep dive into Apple Inc. As part of my Programming for Business Analytics coursework at NTHU, I wanted to look beyond the basic financial news headlines and actually crunch the numbers on a weird anomaly: Apple's net profit margin dropped in 2024 (mostly due to that €13 billion European Commission tax ruling), yet investors kept pushing the stock price up. Through data wrangling, statistical analysis, and building a custom "Normalized Growth Index" in R, this report breaks down how market optimism around Apple's Services segment and the "AI Supercycle" completely overpowered the negative signals from their statutory margins.
+Welcome to our data-driven deep dive into Apple Inc. As part of our Programming for Business Analytics coursework at NTHU, we wanted to look beyond the basic financial news headlines and actually crunch the numbers on a weird anomaly: Apple's net profit margin dropped in 2024 (mostly due to that €13 billion European Commission tax ruling), yet investors kept pushing the stock price up. Through data wrangling, statistical analysis, and building a custom "Normalized Growth Index" in R, this report breaks down how market optimism around Apple's Services segment and the "AI Supercycle" completely overpowered the negative signals from their statutory margins.
 
 ## What I Used & What I Did
 I built the analytical pipeline in **R**, mostly living inside the `tidyverse`. 
